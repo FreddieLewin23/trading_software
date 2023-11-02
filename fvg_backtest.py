@@ -14,9 +14,9 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # i gave up on trying the different target_stdev pull, the taget std was also far too high
 
-os.environ['QI_API_KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+os.environ['QI_API_KEY'] = 'API-KEY'
 configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+configuration.api_key['X-API-KEY'] = 'API-KEY'
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 # opens JSON file
