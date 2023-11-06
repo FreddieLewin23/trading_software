@@ -41,7 +41,9 @@ def subtract_days_from_date(input_date_str, n):
     new_date_str = input_date.strftime("%Y-%m-%d")
     return new_date_str
 
-# pulls data from JSON between the dates you want
+# pulls data from JSON between the dates you want. The JSON file is a triple nested dictionary where the initial key is the model name,
+# the values are dictionaries with keys as dates, and values are dictionaries with keys as data names (FVG, Rsq, percentage gap, model value etc),
+# and the values unix epoch timestamps (seconds since 1970/01/01)
 def grab_data2(model, start, end):
     try:
         model_data = data[model]  # Assuming 'data' is a dictionary containing your model data
