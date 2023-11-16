@@ -41,8 +41,6 @@ api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 # i will start with long only and since i know that the average returns for long only trades for EUR, USD stocks and FX
 # is about 2% every 0.5% about or below 2% will give a score above or below 5
-
-
 def fvg_backtest_long(model, start, end, threshold_buy, threshold_sell, Rsq):
     df = grab_data2(model=model, start=start, end=end)
     if len(df) == 0:
@@ -120,6 +118,7 @@ def fvg_backtest_long(model, start, end, threshold_buy, threshold_sell, Rsq):
                                        'Trades', 'Stop Loss Count', 'Trades as dic'])
     return results
 
+
 def backtest_score(results_from_backtest):
     if not results_from_backtest:
         return 10
@@ -158,9 +157,6 @@ def mvg_current(model, date, look_back):
     return (real_value_current - real_value_look_back) / look_back
 
 
-
-# this will give me a score out of around 20 ro quantify the backtest strength
-# model_value_gradient_n_day_diff(model, date, look_back)
 def price_trend_score(model, date_of_trade_entry):
     three_day = mvg_current(model=model, date=date_of_trade_entry, look_back=3)
     ten_day = mvg_current(model=model, date=date_of_trade_entry, look_back=10)
@@ -207,31 +203,10 @@ def quantify_buy_amount(model, date_of_trade_entry):
     return [math.ceil(amount_to_buy / real_value), amount_to_buy]
 
 
-
-
-
-# the amount in the account is 1,000,000. i suggest a base trade amount of 2000
-
-
 models_USD = [x.name
           for x in api_instance.get_models(tags='USD, Stock')
           if x.model_parameter == 'long term' and '_' not in x.name
           ][:3400]
-
-# models_EUR = [x.name
-#           for x in api_instance.get_models(tags='EUR, Stock')
-#           if x.model_parameter == 'long term' and '_' not in x.name
-#           ]
-
-# on each day i care is the RSq is above 65, fvg < -1, backtest_score >= 10, price_trend_score >= 2
-# then the trade will be entered. I will have a heap of currently open trades, at the strat of each day i want it to
-# iterate through all the opne trades and continue/close the trade when neccessary
-# i want to exit the trade if:
-#     stop_loss triggered (volatility adjusted, framework already in place)
-#     fvg > -0.25
-
-# the next step is to create a function that iterates through the USD stocks only for now and identfies current trades
-# i will have no inputs and will output an array of model names to buy
 
 def find_models_to_buy():
     new_trade_models = []
@@ -285,9 +260,6 @@ def find_models_to_buy():
 
     return [new_trade_models, model_amount_dict]
 
-# now i have a csv file with the currently open trades in it keeping track of the open trades
-# now i want to remove the rows that the check function says to end,
-# and work out how to end that trade in the alpaca demo account
 
 def check_current_trades():
     currently_open_trades = []
@@ -296,9 +268,14 @@ def check_current_trades():
         currently_open_trades.append([row['model'], row['real_value']])
     #     now i have an array of model names of model with trades open on the demo account
     models_to_exit = []
+    i = 0
     for model in currently_open_trades:
+        i += 1
+        print(f'{i} / {len(currently_open_trades)}')
         today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
         current_model_data = Qi_wrapper.get_model_data(model=model[0], start=today_date, end=today_date, term='Long term')
+
+        # print(f'{currently_open_trades.index(model[0])} / {len(currently_open_trades)}: {(currently_open_trades.index(model[0]) / len(currently_open_trades)) * 100} ')
 
         if len(current_model_data) == 0:
             continue
@@ -333,6 +310,7 @@ def check_current_trades():
     # this gathers the data from the currently open trades for trades that need to be ended
     df_open_trades = pd.read_csv('currently_open_trades.csv')
     data_from_currently_open_trades = []
+# models_to_exit contains all the model names for the trades that need to be ended
     for model in models_to_exit:
         model_name = model[0][0]
         for index, row in df_open_trades.iterrows():
@@ -341,6 +319,7 @@ def check_current_trades():
                 trade_entry_value = row['real_value']
                 trade_entry_date = row['today_date']
                 data_from_currently_open_trades.append([model_symbol, trade_entry_value, trade_entry_date])
+    # data_from_currently_open_trades contains data for the trades that need to be ended
 
     # this adds all the data into array for the completed trades csv file
     for model in models_to_exit:
@@ -348,7 +327,7 @@ def check_current_trades():
             if data_point[0] == model[0][0]:
                 data_for_completed_trades.append([model[0][0], data_point[1],
                                                   model[1], data_point[2], model[2]])
-    #             data for completed trades is an array of array with model name, buy, sell, buy date, sell date
+    #data for completed trades is an array of array with model name, buy, sell, buy date, sell date
 
     # this writes ot the completed trades to add the complete trades
     print(data_for_completed_trades)
@@ -356,12 +335,7 @@ def check_current_trades():
     new_data = pd.DataFrame(data_for_completed_trades, columns=existing_data.columns)
     combined_data = pd.concat([existing_data, new_data], ignore_index=True)
     combined_data.to_csv('completed_trades_alpaca.csv', index=False)
-
-    # this removes the completed trades from currently open trades and it works
-
-    # the error is occuring since it is iterating through current;y open trades and thinking it is in more positions
-    # than it actually is and placing short orders (anti-long orders) on positions it thinks it is ending, but instead
-    # it is starting a short order
+    # this adds the completed trades to the completed trades array
 
     current_trades_df = pd.read_csv("currently_open_trades.csv")
     model_names_to_exit = [subarray[0][0] for subarray in models_to_exit]
@@ -376,8 +350,6 @@ def check_current_trades():
     df_new.to_csv('currently_open_trades.csv', index=False)
 
     return [models_to_exit, model_order_size_dict]
-
-
 
 
 
