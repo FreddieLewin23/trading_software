@@ -41,13 +41,13 @@ def main():
     for index, row in df_open.iterrows():
         models_currently_open.append(row['model'])
     models_to_buy = [item[0] for item in find_models_to_buy()[0]]
+    # models_to_buy = []
     models_to_exit = [item[0] for item in check_current_trades()[0]]
     today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
     # this adds the buy signals, for models where i am not currently in the trade
     models_to_buy = [model for model in models_to_buy if model not in models_currently_open]
     for model in models_to_buy:
         order_size = quantify_buy_amount(model=model, date_of_trade_entry=today_date)
-
         # if i don't have the money, don't try to enter the trade
         if float(order_size[1]) > float(account.non_marginable_buying_power):
             continue
@@ -63,9 +63,11 @@ def main():
             continue
 
     # this sells the qty avaialble for the models the AI tells me to sell, if i am in an active trade with the model
+
     for model in models_to_exit:
         print(f'{model} SELL')
         for position in positions:
+
             if position.symbol == model[0]:
                 order_size = position.qty_available
                 market_order_data = MarketOrderRequest(
