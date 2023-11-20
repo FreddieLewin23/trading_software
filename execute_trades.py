@@ -13,11 +13,6 @@ import os
 import Qi_wrapper
 from icecream import ic
 
-# request ID - 828da785282630321fe5bf62cec5e2ca
-# API-KEY AKU0QQ19OHEO77PEWZPL
-# secret key LRK1xDNhwHVt3CgCVMGLDYP6vAwhWXDVbYaSsOuH
-# $ curl -v https://paper-api.alpaca.markets/v2/account
-# trading_client = TradingClient('AKU0QQ19OHEO77PEWZPL', 'LRK1xDNhwHVt3CgCVMGLDYP6vAwhWXDVbYaSsOuH')
 
 os.environ['QI_API_KEY'] = 'API-KEY-QI'
 configuration = qi_client.Configuration()
