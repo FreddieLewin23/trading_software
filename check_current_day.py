@@ -13,36 +13,16 @@ import threading
 import Qi_wrapper
 from backtest_json_redo_MVG import grab_data2, find_sd_from_model_data, subtract_days_from_date
 
-# results = [round(average_percentage_return, 3), len(trades_profit_percentage), round(percentage_profitable, 3),
-#                stop_loss_count, round(np.mean(days_for_trades), 3),
-#                trades, stop_loss_count, trades_dict]
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-# i gave up on trying the different target_stdev pull, the taget std was also far too high
-
-os.environ['QI_API_KEY'] = 'API-KEY'
+os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = 'API-KEY'
+configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
-# i have the backtesting rig complete to find the price trend, backtest and macro valuation data to quantify the
-# amount i should put into each trade (signal strength).
-
-# now it is a question of creating a function that iterates through the models i want to consider and finding the
-# curren trades to enter and giving them a signal strength score
-
-# to find the price trend strength i will have a 3 day, 10 day, 30 day lookback with a n day difference model value
-# weighted equally and quantify that
-
-
-# on each day once i have the trades and the signal strength scores
-
-# i will start with long only and since i know that the average returns for long only trades for EUR, USD stocks and FX
-# is about 2% every 0.5% about or below 2% will give a score above or below 5
 def fvg_backtest_long(model, start, end, threshold_buy, threshold_sell, Rsq):
     df = grab_data2(model=model, start=start, end=end)
+    # df = Qi_wrapper.get_model_data(model=model, start=start, end=end, term='Long term')
     if len(df) == 0:
         return []
     trades_dict = []
@@ -199,7 +179,7 @@ def quantify_buy_amount(model, date_of_trade_entry):
     else:
         pt_coefficient = 1.5
 
-    amount_to_buy = 750 * bt_coefficient * pt_coefficient
+    amount_to_buy = 2000 * bt_coefficient * pt_coefficient
     return [math.ceil(amount_to_buy / real_value), amount_to_buy]
 
 
@@ -219,6 +199,8 @@ def find_models_to_buy():
         print(f'{i} / {len(models_USD)} : {str(round(i / len(models_USD), 5) * 100)[:5]}%')
         i += 1
         today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
+        if model == "NLTX":
+            continue
         current_model_data = Qi_wrapper.get_model_data(model=model, start=today_date, end=today_date, term='Long term')
         if model in currently_open_trades:
             continue
@@ -231,14 +213,22 @@ def find_models_to_buy():
         model_value = current_model_data['Model Value'][0]
         absolute_gap = current_model_data['Absolute Gap'][0]
         real_value = model_value + absolute_gap
-        backtest_data = fvg_backtest_long(model=model, start='2019-03-03', end='2023-01-01',
-                                          threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
-        if len(backtest_data) == 0:
-            continue
+
+        # backtest_data = fvg_backtest_long(model=model, start='2019-03-03', end='2023-01-01',
+        #                                   threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
+        # if len(backtest_data) == 0:
+        #     continue
+
         if today_rsq > 65 and today_fvg < -1:
+
+            backtest_data = fvg_backtest_long(model=model, start='2019-03-03', end='2023-01-01',
+                                              threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
+            if len(backtest_data) == 0:
+                continue
+
             backtest_score_today = backtest_score(backtest_data)
             # remove next 3 lines of code when using price trends again
-            if backtest_score_today > 4:
+            if backtest_score_today > 2:
                 new_trade_models.append([model, real_value, today_date, quantify_buy_amount(model=model, date_of_trade_entry=today_date)[1]])
                 print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}')
 
@@ -264,6 +254,7 @@ def find_models_to_buy():
 def check_current_trades():
     currently_open_trades = []
     df = pd.read_csv('currently_open_trades.csv')
+    data_count = 0
     for index, row in df.iterrows():
         currently_open_trades.append([row['model'], row['real_value']])
     #     now i have an array of model names of model with trades open on the demo account
@@ -274,7 +265,8 @@ def check_current_trades():
         print(f'{i} / {len(currently_open_trades)}')
         today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
         current_model_data = Qi_wrapper.get_model_data(model=model[0], start=today_date, end=today_date, term='Long term')
-
+        if len(current_model_data) == 1:
+            data_count += 1
         # print(f'{currently_open_trades.index(model[0])} / {len(currently_open_trades)}: {(currently_open_trades.index(model[0]) / len(currently_open_trades)) * 100} ')
 
         if len(current_model_data) == 0:
@@ -349,7 +341,14 @@ def check_current_trades():
     print(df_new)
     df_new.to_csv('currently_open_trades.csv', index=False)
 
+    print(f'{data_count} / {len(currently_open_trades)} had model data')
+
     return [models_to_exit, model_order_size_dict]
+
+
+
+
+
 
 
 
