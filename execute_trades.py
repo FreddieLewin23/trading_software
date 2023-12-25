@@ -14,14 +14,15 @@ import Qi_wrapper
 from icecream import ic
 
 
-os.environ['QI_API_KEY'] = 'API-KEY-QI'
+
+os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = 'QI-API-KEY'
+configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
-API_KEY = "ALPACA-API-KEY"
-SECRET_KEY = "ALPACA-SECRET-KEY"
+API_KEY = ""
+SECRET_KEY = ""
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 account = trading_client.get_account()
 positions = trading_client.get_all_positions()
@@ -29,13 +30,17 @@ orders = trading_client.get_orders()
 
 df = pd.read_csv('currently_open_trades.csv')
 
-
 def main():
     models_currently_open = []
     df_open = pd.read_csv('currently_open_trades.csv')
     for index, row in df_open.iterrows():
         models_currently_open.append(row['model'])
+
     models_to_buy = [item[0] for item in find_models_to_buy()[0]]
+    # models_currently_open = []
+    # for position in positions:
+    #     models_currently_open.append(position.symbol)
+
     # models_to_buy = []
     models_to_exit = [item[0] for item in check_current_trades()[0]]
     today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
@@ -46,14 +51,15 @@ def main():
         # if i don't have the money, don't try to enter the trade
         if float(order_size[1]) > float(account.non_marginable_buying_power):
             continue
-        print(f'{model} BUY')
+
         market_order_data = MarketOrderRequest(
                               symbol=model,
-                              qty=order_size[0],
+                              notional=order_size[1], #CHANGED FROM [0] and notional
                               side=OrderSide.BUY,
-                              time_in_force=TimeInForce.GTC)
+                              time_in_force=TimeInForce.DAY) #CHANGED FROM GTC
         try:
             account_request = trading_client.submit_order(market_order_data)
+            print(f'{model} BUY')
         except alpaca.common.exceptions.APIError:
             continue
 
@@ -64,10 +70,10 @@ def main():
         for position in positions:
 
             if position.symbol == model[0]:
-                order_size = position.qty_available
+                order_size = position.qty_available # CHANGED from market_value """"''qty_available''""""
                 market_order_data = MarketOrderRequest(
                     symbol=model[0],
-                    qty=order_size,
+                    qty=order_size, # CHANGED from notional '''qty''' (DAY with qty, GTC with notional)
                     side=OrderSide.SELL,
                     time_in_force=TimeInForce.GTC)
                 account_request = trading_client.submit_order(market_order_data)
@@ -75,5 +81,7 @@ def main():
                 
 if __name__ == '__main__':
     main()
+
+
 
 
