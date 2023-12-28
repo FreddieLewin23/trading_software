@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 from trading_algo_backtest import find_models_to_buy_long_new_backtest, check_current_trades_long_new_backtest
 
 
-os.environ['QI_API_KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
