@@ -107,7 +107,7 @@ def fvg_backtest_long_backtest(model, start, end, threshold_buy, threshold_sell,
             # reset buy to initialised value
             stop_loss_count += 1
             buy_date = None
-        if fvg_value > threshold_sell and buy != float("inf") and rsq_value > Rsq:
+        if fvg_value > threshold_sell and buy != float("inf"):
             sell_date = index
             # print(buy_date, sell_date, ((real_value - buy) / buy) * 100)
             days_between = (sell_date - buy_date).days
