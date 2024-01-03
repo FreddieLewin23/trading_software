@@ -1,6 +1,7 @@
 import os
 import json
 import pandas as pd
+import time
 import qi_client
 import datetime
 import csv
@@ -20,7 +21,23 @@ configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
-def subtract_days_from_date_backtest(input_date_str, n):
+# def filter_csv_by_date_bfo(model, start_date, end_date):
+#     path = '/Users/FreddieLewin/PycharmProjects/new_dl_token/bfo_backtest/model_data/'
+#     path = path + f'{model}.csv'
+#     df = pd.read_csv(path)
+#     df['Date'] = pd.to_datetime(df['Date'])
+#     filtered_df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
+#     return filtered_df
+
+def filter_csv_by_date_bfo(model, start_date, end_date):
+    path = '/Users/FreddieLewin/PycharmProjects/new_dl_token/bfo_backtest/model_data/'
+    path = path + f'{model}.csv'
+    df = pd.read_csv(path, parse_dates=['Date'], index_col='Date')  # Set 'Date' as index
+    filtered_df = df[(df.index >= start_date) & (df.index <= end_date)]
+    return filtered_df
+
+
+def subtract_days_from_date_backtest_bfo(input_date_str, n):
     try:
         input_date = datetime.strptime(input_date_str, "%Y-%m-%d")
     except ValueError:
@@ -37,7 +54,7 @@ def subtract_days_from_date_backtest(input_date_str, n):
     new_date_str = input_date.strftime("%Y-%m-%d")
     return new_date_str
 
-def find_sd_from_model_data_backtest(model, date):
+def find_sd_from_model_data_backtest_bfo(model, date):
     # this code extracts the data from the JSON file that is needed
     end_date = str(date).split()[0]
     year, month, day = end_date.split('-')
@@ -45,8 +62,7 @@ def find_sd_from_model_data_backtest(model, date):
         day = '28'
     year = str(int(year) - 1)
     start_date = f"{year}-{month}-{day}"
-    # increments year back one to find start date for monthly rolling average
-    df = Qi_wrapper.get_model_data(model=model, start=start_date, end=end_date, term='Long term')
+    df = filter_csv_by_date_bfo(model=model, start_date=start_date, end_date=end_date)
     monthly_return = []
     if len(df) == 0:
         return 10
@@ -66,9 +82,17 @@ def find_sd_from_model_data_backtest(model, date):
     return statistics.stdev(monthly_return)
 
 
-def fvg_backtest_long_backtest(model, start, end, threshold_buy, threshold_sell, Rsq):
-    df = Qi_wrapper.get_model_data(model=model, start=start, end=end, term='Long term')
+def fvg_backtest_long_backtest_bfo(model, start, end, threshold_buy, threshold_sell, Rsq):
+
+    # TRY EXCEPT IS A NEW SEGMENT OF CODE
+    # for i in range(5):
+    #     try:
+    df = filter_csv_by_date_bfo(model=model, start_date=start, end_date=end)
     # df = Qi_wrapper.get_model_data(model=model, start=start, end=end, term='Long term')
+    #     except Exception as e:
+    #         time.sleep(2)
+    #         continue
+
     if len(df) == 0:
         return []
     trades_dict = []
@@ -76,7 +100,7 @@ def fvg_backtest_long_backtest(model, start, end, threshold_buy, threshold_sell,
     fvg_at_buy = None
     buy = float('inf')
     day_count = 0
-    std = find_sd_from_model_data_backtest(model, start)
+    std = find_sd_from_model_data_backtest_bfo(model, start)
     if not std:
         return []
     stop_loss_change = 2 * std
@@ -85,7 +109,7 @@ def fvg_backtest_long_backtest(model, start, end, threshold_buy, threshold_sell,
     buy_date = None
     for index, row in df.iterrows():
         if day_count == 60:
-            stop_loss_change = 2 * find_sd_from_model_data_backtest(model, str(index).split()[0])
+            stop_loss_change = 2 * find_sd_from_model_data_backtest_bfo(model, str(index).split()[0])
             day_count = 0
         real_value = row.iloc[2] + row.iloc[4]
         # row.iloc[2] + row.iloc[4] this is model value + absolute gap to find the real_value at this day
@@ -146,7 +170,7 @@ def fvg_backtest_long_backtest(model, start, end, threshold_buy, threshold_sell,
     return results
 
 
-def backtest_score_long_backtest(results_from_backtest):
+def backtest_score_long_backtest_bfo(results_from_backtest):
     if not results_from_backtest:
         return 10
     average_returns = results_from_backtest[0]
@@ -164,11 +188,11 @@ def backtest_score_long_backtest(results_from_backtest):
     return hit_rate_score + average_returns
 
 
-def mvg_current_backtest(model, date, look_back):
+def mvg_current_backtest_bfo(model, date, look_back):
     date = str(date).split()[0]
-    start_date = subtract_days_from_date_backtest(date, look_back)
-    data_from_look_back = Qi_wrapper.get_model_data(model=model, start=start_date, end=start_date, term='Long term')
-    data_current = Qi_wrapper.get_model_data(model=model, start=date, end=date, term='Long term')
+    start_date = subtract_days_from_date_backtest_bfo(date, look_back)
+    data_from_look_back = filter_csv_by_date_bfo(model=model, start_date=start_date, end_date=start_date)
+    data_current = filter_csv_by_date_bfo(model=model, start_date=date, end_date=date)
     if len(data_current) == 0 or len(data_from_look_back) == 0:
         return 0.01
     model_value_look_back = data_from_look_back['Model Value'][0]
@@ -184,29 +208,29 @@ def mvg_current_backtest(model, date, look_back):
     return (real_value_current - real_value_look_back) / look_back
 
 
-def price_trend_score_backtest(model, date_of_trade_entry):
-    three_day = mvg_current_backtest(model=model, date=date_of_trade_entry, look_back=3)
-    ten_day = mvg_current_backtest(model=model, date=date_of_trade_entry, look_back=10)
-    thirty_day = mvg_current_backtest(model=model, date=date_of_trade_entry, look_back=30)
+def price_trend_score_backtest_bfo(model, date_of_trade_entry):
+    three_day = mvg_current_backtest_bfo(model=model, date=date_of_trade_entry, look_back=3)
+    ten_day = mvg_current_backtest_bfo(model=model, date=date_of_trade_entry, look_back=10)
+    thirty_day = mvg_current_backtest_bfo(model=model, date=date_of_trade_entry, look_back=30)
     mvgs = [three_day, ten_day, thirty_day]
     return (len([num for num in mvgs if num > 0]) / len(mvgs)) * 100
 
 
-def quantify_buy_amount_backtest(model, date_of_trade_entry):
+def quantify_buy_amount_backtest_bfo(model, date_of_trade_entry):
     end = date_of_trade_entry
-    start = subtract_days_from_date_backtest(date_of_trade_entry, 1826)
-    res = fvg_backtest_long_backtest(model=model, start=start, end=date_of_trade_entry,
+    start = subtract_days_from_date_backtest_bfo(date_of_trade_entry, 1300)
+    res = fvg_backtest_long_backtest_bfo(model=model, start=start, end=date_of_trade_entry,
                             threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
-    bt_score = backtest_score_long_backtest(res)  # from 0 to 10, 5 being average
-    pt_score = price_trend_score_backtest(model=model, date_of_trade_entry=date_of_trade_entry)
+    bt_score = backtest_score_long_backtest_bfo(res)  # from 0 to 10, 5 being average
+    pt_score = price_trend_score_backtest_bfo(model=model, date_of_trade_entry=date_of_trade_entry)
     #     i want the real value of the stock on the date and find (to the nearest integer) the number of stocks i want to buy
     #     OKAY THE ERROR IS HAPPENING BECAUSE I AM USING THE DATA FROM CSV WHICH ISNT CURRENT.
     #     NEED TO CREATE NEW QI API BASED MVG FUNCTION
-    price_data = Qi_wrapper.get_model_data(model=model, start=date_of_trade_entry, end=date_of_trade_entry,
-                                           term='Long term')
+
+    price_data = filter_csv_by_date_bfo(model=model, start_date=date_of_trade_entry, end_date=date_of_trade_entry)
     if len(price_data) == 0:
-        date_new = subtract_days_from_date_backtest(input_date_str=date_of_trade_entry, n=1)
-        price_data = Qi_wrapper.get_model_data(model=model, start=date_new, end=date_new, term='Long term')
+        date_new = subtract_days_from_date_backtest_bfo(input_date_str=date_of_trade_entry, n=1)
+        price_data = filter_csv_by_date_bfo(model=model, start_date=date_new, end_date=date_new)
     model_value = price_data['Model Value'][0]
     absolute_gap = price_data['Absolute Gap'][0]
     real_value = model_value + absolute_gap
@@ -229,7 +253,7 @@ def quantify_buy_amount_backtest(model, date_of_trade_entry):
     else:
         pt_coefficient = 1.5
 
-    amount_to_buy = 1200 * bt_coefficient * pt_coefficient
+    amount_to_buy = 4250 * bt_coefficient * pt_coefficient
     return [math.ceil(amount_to_buy / real_value), amount_to_buy]
 
 
@@ -238,21 +262,25 @@ models_USD = [x.name
               if x.model_parameter == 'long term' and '_' not in x.name
               ][:3400]
 
+def has_whitespace(input_string):
+    return any(char.isspace() or char == '/' for char in input_string)
 
-def find_models_to_buy_long_new_backtest(date_of_current):
+def find_models_to_buy_long_new_backtest_bfo(date_of_current):
     new_trade_models = []
     currently_open_trades = []
     i = 0
-    df = pd.read_csv('current_trades_backtest_long.csv')
+    df = pd.read_csv('current_trade_bfo_backtest.csv')
     for index, row in df.iterrows():
         currently_open_trades.append(row['model'])
     for model in models_USD:
+        if has_whitespace(model):
+            continue
         print(f'{i} / {len(models_USD)} : {str(round(i / len(models_USD), 5) * 100)[:5]}%')
         i += 1
         today_date = date_of_current
         if model == "NLTX":
             continue
-        current_model_data = Qi_wrapper.get_model_data(model=model, start=today_date, end=today_date, term='Long term')
+        current_model_data = filter_csv_by_date_bfo(model=model, start_date=today_date, end_date=today_date)
         if model in currently_open_trades:
             continue
         if len(current_model_data) == 0:
@@ -271,20 +299,20 @@ def find_models_to_buy_long_new_backtest(date_of_current):
         #     continue
 
         if today_rsq > 65 and today_fvg < -1:
-            start_date_of_backtest = subtract_days_from_date_backtest(today_date, 1826)
-            backtest_data = fvg_backtest_long_backtest(model=model, start=start_date_of_backtest, end=today_date,
+            start_date_of_backtest = subtract_days_from_date_backtest_bfo(today_date, 1826)
+            backtest_data = fvg_backtest_long_backtest_bfo(model=model, start=start_date_of_backtest, end=today_date,
                                               threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
             if len(backtest_data) == 0:
                 continue
 
-            backtest_score_today = backtest_score_long_backtest(backtest_data)
+            backtest_score_today = backtest_score_long_backtest_bfo(backtest_data)
             # remove next 3 lines of code when using price trends again
             if backtest_score_today > 2:
                 new_trade_models.append([model, real_value, today_date,
-                                         quantify_buy_amount_backtest(model=model, date_of_trade_entry=today_date)[1]])
+                                         quantify_buy_amount_backtest_bfo(model=model, date_of_trade_entry=today_date)[1]])
                 print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}, Date: {today_date}')
 
-    csv_file = 'current_trades_backtest_long.csv'
+    csv_file = 'current_trade_bfo_backtest.csv'
     file_exists = os.path.isfile(csv_file)
     file_is_empty = not file_exists or os.stat(csv_file).st_size == 0
     with open(csv_file, 'a', newline='') as csvfile:
@@ -293,6 +321,16 @@ def find_models_to_buy_long_new_backtest(date_of_current):
         if file_is_empty:
             writer.writeheader()
         for model_data in new_trade_models:
+            # 6 lines below are new
+            current_trades_concurrent = pd.read_csv("current_trade_bfo_backtest.csv")
+            current_investment = 0
+            for index, row in current_trades_concurrent.iterrows():
+                current_investment += row['order_size']
+
+            if current_investment > 15_000:
+                continue
+            print(current_investment)
+
             writer.writerow({'model': model_data[0], 'real_value': model_data[1],
                              'today_date': model_data[2], 'order_size': model_data[3]})
 
@@ -303,9 +341,9 @@ def find_models_to_buy_long_new_backtest(date_of_current):
     return [new_trade_models, model_amount_dict]
 
 
-def check_current_trades_long_new_backtest(date_of_current):
+def check_current_trades_long_new_backtest_bfo(date_of_current):
     currently_open_trades = []
-    df = pd.read_csv('current_trades_backtest_long.csv')
+    df = pd.read_csv('current_trade_bfo_backtest.csv')
     data_count = 0
     for index, row in df.iterrows():
         currently_open_trades.append([row['model'], row['real_value']])
@@ -316,8 +354,7 @@ def check_current_trades_long_new_backtest(date_of_current):
         i += 1
         print(f'{i} / {len(currently_open_trades)}')
         today_date = date_of_current
-        current_model_data = Qi_wrapper.get_model_data(model=model[0], start=today_date, end=today_date,
-                                                       term='Long term')
+        current_model_data = filter_csv_by_date_bfo(model=model[0], start_date=today_date, end_date=today_date)
         if len(current_model_data) == 1:
             data_count += 1
         # print(f'{currently_open_trades.index(model[0])} / {len(currently_open_trades)}: {(currently_open_trades.index(model[0]) / len(currently_open_trades)) * 100} ')
@@ -328,7 +365,7 @@ def check_current_trades_long_new_backtest(date_of_current):
         absolute_gap = current_model_data['Absolute Gap'][0]
         today_fvg = current_model_data['FVG'][0]
         real_value = model_value + absolute_gap
-        stop_loss_change = 2 * find_sd_from_model_data_backtest(model=model[0], date=today_date)
+        stop_loss_change = 2 * find_sd_from_model_data_backtest_bfo(model=model[0], date=today_date)
         if real_value < model[1] - stop_loss_change:
             print(f'END TRADE WITH {model}: STOP-LOSS')
             currently_open_trades = [subarray for subarray in currently_open_trades if subarray[0] != model[0]]
@@ -346,14 +383,14 @@ def check_current_trades_long_new_backtest(date_of_current):
     # i will the niterate through the currently open_trades and grab bhuy_date_date = [row['real_value], row['today_date']
     # to do this i will need to iterate through models_to_exit and append to data array [models_to_exit[0], ,models_to_exit[1], , models_to_exit[2]]
 
-    curr_df = pd.read_csv('current_trades_backtest_long.csv')
+    curr_df = pd.read_csv('current_trade_bfo_backtest.csv')
     # this gets the order_sizes
     model_order_size_dict = {}
     for index, row in curr_df.iterrows():
         model_order_size_dict[row['model']] = row['order_size']
 
     # this gathers the data from the currently open trades for trades that need to be ended
-    df_open_trades = pd.read_csv('current_trades_backtest_long.csv')
+    df_open_trades = pd.read_csv('current_trade_bfo_backtest.csv')
     data_from_currently_open_trades = []
     # models_to_exit contains all the model names for the trades that need to be ended
     for model in models_to_exit:
@@ -377,13 +414,14 @@ def check_current_trades_long_new_backtest(date_of_current):
 
     # this writes ot the completed trades to add the complete trades
     print(data_for_completed_trades)
-    existing_data = pd.read_csv('completed_trades_backtest_long.csv')
+    existing_data = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/bfo_backtest/completed_trades_backtest_long.csv')
     new_data = pd.DataFrame(data_for_completed_trades, columns=existing_data.columns)
     combined_data = pd.concat([existing_data, new_data], ignore_index=True)
-    combined_data.to_csv('completed_trades_backtest_long.csv', index=False)
+    combined_data.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/bfo_backtest/completed_trades_backtest_long.csv', index=False)
+    print("Completed trades added successfully.")
     # this adds the completed trades to the completed trades array
 
-    current_trades_df = pd.read_csv("current_trades_backtest_long.csv")
+    current_trades_df = pd.read_csv("current_trade_bfo_backtest.csv")
     model_names_to_exit = [subarray[0][0] for subarray in models_to_exit]
     print(current_trades_df)
     trade_data_to_keep = []
@@ -392,7 +430,9 @@ def check_current_trades_long_new_backtest(date_of_current):
             trade_data_to_keep.append([row['model'], row['real_value'], row['today_date'], row['order_size']])
     df_new = pd.DataFrame(trade_data_to_keep, columns=['model', 'real_value', 'today_date', 'order_size'])
     print(df_new)
-    df_new.to_csv('current_trades_backtest_long.csv', index=False)
+    df_new.to_csv('current_trade_bfo_backtest.csv', index=False)
     print(f'{data_count} / {len(currently_open_trades)} had model data')
     return [models_to_exit, model_order_size_dict]
+
+
 
