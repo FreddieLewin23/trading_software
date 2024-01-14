@@ -2,7 +2,7 @@ import os
 import json
 import pandas as pd
 import qi_client
-import datetime
+from datetime import datetime, timedelta
 import csv
 import numpy as np
 import concurrent.futures
@@ -11,7 +11,11 @@ import warnings
 import math
 import threading
 import Qi_wrapper
-from backtest_json_redo_MVG import grab_data2, find_sd_from_model_data, subtract_days_from_date
+import alpaca.common.exceptions
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import GetAssetsRequest, MarketOrderRequest, OrderSide
+from alpaca.trading.enums import OrderSide, TimeInForce
+
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 os.environ['QI_API_KEY'] = ''
@@ -20,8 +24,66 @@ configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
+API_KEY = ""
+SECRET_KEY = ""
+trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+clock = trading_client.get_clock()
+account = trading_client.get_account()
+positions = trading_client.get_all_positions()
+orders = trading_client.get_orders()
+
+
+
+
+def subtract_days_from_date(input_date_str, n):
+    try:
+        input_date = datetime.strptime(input_date_str, "%Y-%m-%d")
+    except ValueError:
+        # Handle invalid date format here
+        return input_date_str  # or raise an exception
+    weekdays_to_subtract = n + 1
+    while weekdays_to_subtract > 0:
+        input_date -= timedelta(days=1)
+        if input_date.weekday() < 5:
+            weekdays_to_subtract -= 1
+    if input_date.month == 2 and input_date.day == 29:
+        if not (input_date.year % 4 == 0 and (input_date.year % 100 != 0 or input_date.year % 400 == 0)):
+            input_date = input_date.replace(day=27)
+    new_date_str = input_date.strftime("%Y-%m-%d")
+    return new_date_str
+
+
+def find_sd_from_model_data(model, date):
+    # this code extracts the data from the JSON file that is needed
+    end_date = str(date).split()[0]
+    year, month, day = end_date.split('-')
+    if month == '02' and day == '29':
+        day = '28'
+    year = str(int(year) - 1)
+    start_date = f"{year}-{month}-{day}"
+    # increments year back one to find start date for monthly rolling average
+    df = Qi_wrapper.get_model_data(model=model, start=start_date, end=end_date, term='Long term')
+    monthly_return = []
+    if len(df) == 0:
+        return 10
+    # split rows in to indexes
+    groups = df.groupby(df.index.to_period('M'))
+    # group-by month
+    for group_name, group_df in groups:
+        first_row = group_df.iloc[0]
+        last_row = group_df.iloc[-1]
+        # first last date of each month
+        start_real_value = first_row[2] + first_row[4]
+        end_real_value = last_row[2] + last_row[4]
+        # find real_value from model value and absolute gap
+        monthly_return.append(((end_real_value - start_real_value) / start_real_value) * 100)
+    if len(monthly_return) < 2:
+        return 10  # Handle the case where there are not enough data points for variance calculation
+    return statistics.stdev(monthly_return)
+
+
 def fvg_backtest_long(model, start, end, threshold_buy, threshold_sell, Rsq):
-    df = grab_data2(model=model, start=start, end=end)
+    df = Qi_wrapper.get_model_data(model=model, start=start, end=end, term='Long term')
     # df = Qi_wrapper.get_model_data(model=model, start=start, end=end, term='Long term')
     if len(df) == 0:
         return []
@@ -99,7 +161,7 @@ def fvg_backtest_long(model, start, end, threshold_buy, threshold_sell, Rsq):
     return results
 
 
-def backtest_score(results_from_backtest):
+def backtest_score_long(results_from_backtest):
     if not results_from_backtest:
         return 10
     average_returns = results_from_backtest[0]
@@ -137,18 +199,40 @@ def mvg_current(model, date, look_back):
     return (real_value_current - real_value_look_back) / look_back
 
 
+def mvg_current_linear_regression(model, date, look_back):
+    date = str(date).split()[0]
+    start_date = subtract_days_from_date(date, look_back)
+    data_df = Qi_wrapper.get_model_data(model=model, start=start_date, end=date, term='Long term')
+    if len(data_df) == 0:
+        return 0.01
+    model_values = []
+    for index, row in data_df.iterrows():
+        model_values.append(row['Model Value'])
+    x_values = np.array(list(range(len(model_values))))
+    y_values = np.array(model_values)
+    # polyfit x and y values and deg is the number of degrees of the power series you want. UNREAL ENDPOINT
+    slope, _ = np.polyfit(x_values, y_values, 1)
+    return slope
+
+
 def price_trend_score(model, date_of_trade_entry):
-    three_day = mvg_current(model=model, date=date_of_trade_entry, look_back=3)
-    ten_day = mvg_current(model=model, date=date_of_trade_entry, look_back=10)
-    thirty_day = mvg_current(model=model, date=date_of_trade_entry, look_back=30)
+    three_day = mvg_current_linear_regression(model=model, date=date_of_trade_entry, look_back=3)
+    ten_day = mvg_current_linear_regression(model=model, date=date_of_trade_entry, look_back=10)
+    thirty_day = mvg_current_linear_regression(model=model, date=date_of_trade_entry, look_back=30)
     mvgs = [three_day, ten_day, thirty_day]
     return (len([num for num in mvgs if num > 0]) / len(mvgs)) * 100
+
+
+def find_base_order_size():
+    account_value = account.non_marginable_buying_power
+    return int(account_value) / 254  # over the 11 year backtest the average number of active trades was 127.1. this can be improved upon
+# since NMBP is 2x leveraged I have doubled the divisor
 
 
 def quantify_buy_amount(model, date_of_trade_entry):
     res = fvg_backtest_long(model=model, start='2019-03-05', end='2023-01-01',
                             threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
-    bt_score = backtest_score(res) #from 0 to 10, 5 being average
+    bt_score = backtest_score_long(res) #from 0 to 10, 5 being average
     pt_score = price_trend_score(model=model, date_of_trade_entry=date_of_trade_entry)
 #     i want the real value of the stock on the date and find (to the nearest integer) the number of stocks i want to buy
 #     OKAY THE ERROR IS HAPPENING BECAUSE I AM USING THE DATA FROM CSV WHICH ISNT CURRENT.
@@ -179,20 +263,20 @@ def quantify_buy_amount(model, date_of_trade_entry):
     else:
         pt_coefficient = 1.5
 
-    amount_to_buy = 2000 * bt_coefficient * pt_coefficient
+    amount_to_buy = 1500 * bt_coefficient * pt_coefficient
     return [math.ceil(amount_to_buy / real_value), amount_to_buy]
 
 
-models_USD = [x.name
-          for x in api_instance.get_models(tags='USD, Stock')
-          if x.model_parameter == 'long term' and '_' not in x.name
-          ][:3400]
 
-def find_models_to_buy():
+def find_models_to_buy_long():
+    models_USD = [x.name
+                  for x in api_instance.get_models(tags='USD, Stock')
+                  if x.model_parameter == 'long terfor m' and '_' not in x.name
+                  ][:3400]
     new_trade_models = []
     currently_open_trades = []
     i = 0
-    df = pd.read_csv('currently_open_trades.csv')
+    df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
     for index, row in df.iterrows():
         currently_open_trades.append(row['model'])
     for model in models_USD:
@@ -213,26 +297,18 @@ def find_models_to_buy():
         model_value = current_model_data['Model Value'][0]
         absolute_gap = current_model_data['Absolute Gap'][0]
         real_value = model_value + absolute_gap
-
-        # backtest_data = fvg_backtest_long(model=model, start='2019-03-03', end='2023-01-01',
-        #                                   threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
-        # if len(backtest_data) == 0:
-        #     continue
-
         if today_rsq > 65 and today_fvg < -1:
-
             backtest_data = fvg_backtest_long(model=model, start='2019-03-03', end='2023-01-01',
                                               threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
             if len(backtest_data) == 0:
                 continue
-
-            backtest_score_today = backtest_score(backtest_data)
-            # remove next 3 lines of code when using price trends again
+            backtest_score_today = backtest_score_long(backtest_data)
             if backtest_score_today > 2:
-                new_trade_models.append([model, real_value, today_date, quantify_buy_amount(model=model, date_of_trade_entry=today_date)[1]])
-                print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}')
+                if price_trend_score(model=model, date_of_trade_entry=today_date) > 25:
+                    new_trade_models.append([model, real_value, today_date, quantify_buy_amount(model=model, date_of_trade_entry=today_date)[1]])
+                    print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}')
 
-    csv_file = 'currently_open_trades.csv'
+    csv_file = '/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv'
     file_exists = os.path.isfile(csv_file)
     file_is_empty = not file_exists or os.stat(csv_file).st_size == 0
     with open(csv_file, 'a', newline='') as csvfile:
@@ -251,9 +327,9 @@ def find_models_to_buy():
     return [new_trade_models, model_amount_dict]
 
 
-def check_current_trades():
+def check_current_trades_long():
     currently_open_trades = []
-    df = pd.read_csv('currently_open_trades.csv')
+    df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
     data_count = 0
     for index, row in df.iterrows():
         currently_open_trades.append([row['model'], row['real_value']])
@@ -293,14 +369,14 @@ def check_current_trades():
     # i will the niterate through the currently open_trades and grab bhuy_date_date = [row['real_value], row['today_date']
     # to do this i will need to iterate through models_to_exit and append to data array [models_to_exit[0], ,models_to_exit[1], , models_to_exit[2]]
 
-    curr_df = pd.read_csv('currently_open_trades.csv')
+    curr_df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
     # this gets the order_sizes
     model_order_size_dict = {}
     for index, row in curr_df.iterrows():
         model_order_size_dict[row['model']] = row['order_size']
 
     # this gathers the data from the currently open trades for trades that need to be ended
-    df_open_trades = pd.read_csv('currently_open_trades.csv')
+    df_open_trades = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
     data_from_currently_open_trades = []
 # models_to_exit contains all the model names for the trades that need to be ended
     for model in models_to_exit:
@@ -323,13 +399,13 @@ def check_current_trades():
 
     # this writes ot the completed trades to add the complete trades
     print(data_for_completed_trades)
-    existing_data = pd.read_csv('completed_trades_alpaca.csv')
+    existing_data = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/completed_trades_alpaca.csv')
     new_data = pd.DataFrame(data_for_completed_trades, columns=existing_data.columns)
     combined_data = pd.concat([existing_data, new_data], ignore_index=True)
-    combined_data.to_csv('completed_trades_alpaca.csv', index=False)
+    combined_data.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/completed_trades_alpaca.csv', index=False)
     # this adds the completed trades to the completed trades array
 
-    current_trades_df = pd.read_csv("currently_open_trades.csv")
+    current_trades_df = pd.read_csv("/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv")
     model_names_to_exit = [subarray[0][0] for subarray in models_to_exit]
     print(current_trades_df)
     trade_data_to_keep = []
@@ -339,14 +415,11 @@ def check_current_trades():
 
     df_new = pd.DataFrame(trade_data_to_keep, columns=['model', 'real_value', 'today_date', 'order_size'])
     print(df_new)
-    df_new.to_csv('currently_open_trades.csv', index=False)
+    df_new.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv', index=False)
 
     print(f'{data_count} / {len(currently_open_trades)} had model data')
 
     return [models_to_exit, model_order_size_dict]
-
-
-
 
 
 
