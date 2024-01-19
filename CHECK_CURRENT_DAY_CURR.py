@@ -17,6 +17,7 @@ from alpaca.trading.requests import GetAssetsRequest, MarketOrderRequest, OrderS
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
@@ -31,7 +32,6 @@ clock = trading_client.get_clock()
 account = trading_client.get_account()
 positions = trading_client.get_all_positions()
 orders = trading_client.get_orders()
-
 
 
 
@@ -51,6 +51,29 @@ def subtract_days_from_date(input_date_str, n):
             input_date = input_date.replace(day=27)
     new_date_str = input_date.strftime("%Y-%m-%d")
     return new_date_str
+
+
+def qi_vol_indicator(date):
+    indexes = ['S&P500', 'Euro Stoxx 600', 'USDJPY', 'EURUSD', 'USD 10Y Swap', 'EUR 10Y Swap']
+    st_rsqs = []
+    for model in indexes:
+        data = Qi_wrapper.get_model_data(model=model, start=date, end=date, term='Short term')
+        if len(data) == 0:
+            continue
+        st_rsqs.append(data.iloc[-1]['Rsq'])
+    if len(st_rsqs) == 0:
+        return 3
+    return 100 - np.mean(st_rsqs)
+
+
+def vol_individual_new(model, date):
+    df = Qi_wrapper.get_model_data(model=model, start=subtract_days_from_date(date, 365), end=date, term='Long term')
+    if len(df) == 0:
+        return 0
+    df['Asset Price'] = df['Model Value'] + df['Absolute Gap']
+    df['Daily Percentage Change'] = df['Asset Price'].pct_change() * 100
+    std_dev = df['Daily Percentage Change'].std()
+    return std_dev
 
 
 def find_sd_from_model_data(model, date):
@@ -166,20 +189,27 @@ def backtest_score_long(results_from_backtest):
         return 10
     average_returns = results_from_backtest[0]
     hit_rate = results_from_backtest[2]
-    return_score = 5 + math.ceil((2.3 - average_returns) / 0.5)
+    return_score = 5 + math.ceil((average_returns - 2.3) / 0.5)
     if return_score < 0:
         return_score = 0
     if return_score > 10:
         return_score = 10
-    hit_rate_score = 5 + math.ceil((60 - hit_rate) / 4)
+    hit_rate_score = 5 + math.ceil((hit_rate - 60) / 4)
     if hit_rate_score < 0:
         hit_rate_score = 0
     if hit_rate_score > 10:
         hit_rate_score = 10
-    return hit_rate_score + average_returns
+    return hit_rate_score + return_score
 
 
-def mvg_current(model, date, look_back):
+def mvg_current_n_day_diff(model, date, look_back):
+    '''
+    no longer used
+    :param model:
+    :param date:
+    :param look_back:
+    :return:
+    '''
     date = str(date).split()[0]
     start_date = subtract_days_from_date(date, look_back)
     data_from_look_back = Qi_wrapper.get_model_data(model=model, start=start_date, end=start_date, term='Long term')
@@ -226,57 +256,47 @@ def price_trend_score(model, date_of_trade_entry):
 def find_base_order_size():
     account_value = account.non_marginable_buying_power
     return int(account_value) / 254  # over the 11 year backtest the average number of active trades was 127.1. this can be improved upon
-# since NMBP is 2x leveraged I have doubled the divisor
 
 
-def quantify_buy_amount(model, date_of_trade_entry):
-    res = fvg_backtest_long(model=model, start='2019-03-05', end='2023-01-01',
+
+
+def quantify_order_size_vol_adjusted_new(model, date_of_trade_entry):
+    start_date = subtract_days_from_date(input_date_str=date_of_trade_entry, n=1800)
+    res = fvg_backtest_long(model=model, start=start_date, end=date_of_trade_entry,
                             threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
-    bt_score = backtest_score_long(res) #from 0 to 10, 5 being average
+    bt_score = backtest_score_long(res)
     pt_score = price_trend_score(model=model, date_of_trade_entry=date_of_trade_entry)
-#     i want the real value of the stock on the date and find (to the nearest integer) the number of stocks i want to buy
-#     OKAY THE ERROR IS HAPPENING BECAUSE I AM USING THE DATA FROM CSV WHICH ISNT CURRENT.
-#     NEED TO CREATE NEW QI API BASED MVG FUNCTION
-    price_data = Qi_wrapper.get_model_data(model=model, start=date_of_trade_entry, end=date_of_trade_entry, term='Long term')
+    price_data = Qi_wrapper.get_model_data(model=model, start=date_of_trade_entry, end=date_of_trade_entry,
+                                           term='Long term')
     if len(price_data) == 0:
         date_new = subtract_days_from_date(input_date_str=date_of_trade_entry, n=1)
         price_data = Qi_wrapper.get_model_data(model=model, start=date_new, end=date_new, term='Long term')
     model_value = price_data['Model Value'][0]
     absolute_gap = price_data['Absolute Gap'][0]
     real_value = model_value + absolute_gap
-
-    if 0 <= bt_score < 2.5:
-        bt_coefficient = 0.75
-    elif 2.5 <= bt_score < 5:
-        bt_coefficient = 1
-    elif 5 <= bt_score < 7.5:
-        bt_coefficient = 1.25
-    else:
-        bt_coefficient = 1.5
-        
-    if 0 <= pt_score < 25:
-        pt_coefficient = 0.75
-    elif 25 <= pt_score < 50:
-        pt_coefficient = 1
-    elif 50 <= pt_score < 75:
-        pt_coefficient = 1.25
-    else:
-        pt_coefficient = 1.5
-
-    amount_to_buy = 1500 * bt_coefficient * pt_coefficient
-    return [math.ceil(amount_to_buy / real_value), amount_to_buy]
-
+    if 0 <= bt_score < 2.5: bt_coefficient = 0.75
+    elif 2.5 <= bt_score < 5: bt_coefficient = 1
+    elif 5 <= bt_score < 7.5: bt_coefficient = 1.25
+    else: bt_coefficient = 1.5
+    if 0 <= pt_score < 25: pt_coefficient = 0.75
+    elif 25 <= pt_score < 50: pt_coefficient = 1
+    elif 50 <= pt_score < 75: pt_coefficient = 1.25
+    else: pt_coefficient = 1.5
+    base_order_size = float(account.equity) * 1.5 / 127
+    individual_vol = vol_individual_new(model=model, date=date_of_trade_entry)
+    amount_to_buy = base_order_size * bt_coefficient * pt_coefficient * (1 - ((individual_vol - 3.26) / individual_vol))
+    return [round(amount_to_buy / real_value, 4), amount_to_buy]
 
 
 def find_models_to_buy_long():
     models_USD = [x.name
                   for x in api_instance.get_models(tags='USD, Stock')
-                  if x.model_parameter == 'long terfor m' and '_' not in x.name
+                  if x.model_parameter == 'long term' and '_' not in x.name
                   ][:3400]
     new_trade_models = []
     currently_open_trades = []
     i = 0
-    df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
+    df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
     for index, row in df.iterrows():
         currently_open_trades.append(row['model'])
     for model in models_USD:
@@ -303,12 +323,17 @@ def find_models_to_buy_long():
             if len(backtest_data) == 0:
                 continue
             backtest_score_today = backtest_score_long(backtest_data)
+            print(f'Backtest Score: {backtest_score_today}')
             if backtest_score_today > 2:
-                if price_trend_score(model=model, date_of_trade_entry=today_date) > 25:
-                    new_trade_models.append([model, real_value, today_date, quantify_buy_amount(model=model, date_of_trade_entry=today_date)[1]])
+                price_trend_score_curr = price_trend_score(model=model, date_of_trade_entry=today_date)
+                print(f'Price Trend Score: {price_trend_score_curr}')
+                if price_trend_score_curr > 25:
+                    print(f'Individual Volatility: {vol_individual_new(model=model, date=today_date)}')
+                    new_trade_models.append([model, real_value, today_date, quantify_order_size_vol_adjusted_new(model=model, date_of_trade_entry=today_date)[1]])
+                    print(f'Market Volatility: {qi_vol_indicator(date=today_date)}')
                     print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}')
 
-    csv_file = '/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv'
+    csv_file = '/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv'
     file_exists = os.path.isfile(csv_file)
     file_is_empty = not file_exists or os.stat(csv_file).st_size == 0
     with open(csv_file, 'a', newline='') as csvfile:
@@ -329,7 +354,7 @@ def find_models_to_buy_long():
 
 def check_current_trades_long():
     currently_open_trades = []
-    df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
+    df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
     data_count = 0
     for index, row in df.iterrows():
         currently_open_trades.append([row['model'], row['real_value']])
@@ -338,7 +363,7 @@ def check_current_trades_long():
     i = 0
     for model in currently_open_trades:
         i += 1
-        print(f'{i} / {len(currently_open_trades)}')
+
         today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
         current_model_data = Qi_wrapper.get_model_data(model=model[0], start=today_date, end=today_date, term='Long term')
         if len(current_model_data) == 1:
@@ -351,6 +376,7 @@ def check_current_trades_long():
         absolute_gap = current_model_data['Absolute Gap'][0]
         today_fvg = current_model_data['FVG'][0]
         real_value = model_value + absolute_gap
+        print(f'{i} / {len(currently_open_trades)} FVG: {today_fvg}')
         stop_loss_change = 2 * find_sd_from_model_data(model=model[0], date=today_date)
         if real_value < model[1] - stop_loss_change:
             print(f'END TRADE WITH {model}: STOP-LOSS')
@@ -369,14 +395,14 @@ def check_current_trades_long():
     # i will the niterate through the currently open_trades and grab bhuy_date_date = [row['real_value], row['today_date']
     # to do this i will need to iterate through models_to_exit and append to data array [models_to_exit[0], ,models_to_exit[1], , models_to_exit[2]]
 
-    curr_df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
+    curr_df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
     # this gets the order_sizes
     model_order_size_dict = {}
     for index, row in curr_df.iterrows():
         model_order_size_dict[row['model']] = row['order_size']
 
     # this gathers the data from the currently open trades for trades that need to be ended
-    df_open_trades = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv')
+    df_open_trades = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
     data_from_currently_open_trades = []
 # models_to_exit contains all the model names for the trades that need to be ended
     for model in models_to_exit:
@@ -399,13 +425,13 @@ def check_current_trades_long():
 
     # this writes ot the completed trades to add the complete trades
     print(data_for_completed_trades)
-    existing_data = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/completed_trades_alpaca.csv')
+    existing_data = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/completed_trades_alpaca_local.csv')
     new_data = pd.DataFrame(data_for_completed_trades, columns=existing_data.columns)
     combined_data = pd.concat([existing_data, new_data], ignore_index=True)
-    combined_data.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/completed_trades_alpaca.csv', index=False)
+    combined_data.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/completed_trades_alpaca_local.csv', index=False)
     # this adds the completed trades to the completed trades array
 
-    current_trades_df = pd.read_csv("/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv")
+    current_trades_df = pd.read_csv("/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv")
     model_names_to_exit = [subarray[0][0] for subarray in models_to_exit]
     print(current_trades_df)
     trade_data_to_keep = []
@@ -415,13 +441,11 @@ def check_current_trades_long():
 
     df_new = pd.DataFrame(trade_data_to_keep, columns=['model', 'real_value', 'today_date', 'order_size'])
     print(df_new)
-    df_new.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/currently_open_trades.csv', index=False)
+    df_new.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv', index=False)
 
     print(f'{data_count} / {len(currently_open_trades)} had model data')
 
     return [models_to_exit, model_order_size_dict]
-
-
 
 
 
