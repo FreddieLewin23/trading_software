@@ -3,7 +3,7 @@ import pandas as pd
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetAssetsRequest, MarketOrderRequest, OrderSide
 from alpaca.trading.enums import OrderSide, TimeInForce
-from find_current_day_trades_long import find_models_to_buy_long, check_current_trades_long, quantify_order_size_vol_adjusted_new
+from CHECK_CURRENT_DAY_TRADES.py import find_models_to_buy_long, check_current_trades_long, quantify_order_size_vol_adjusted_new
 import qi_client
 import os
 import Qi_wrapper
