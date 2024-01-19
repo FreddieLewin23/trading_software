@@ -9,6 +9,18 @@ import os
 import Qi_wrapper
 import numpy as np
 
+# TO RUN THIS CODE, PLEASE HAVE 2 CSV FILES FOR CURRENT TRADES AND COMPLETED TRADES. EACH FILE SHOULD LOOK LIKE THIS:
+
+# model,real_value,today_date,order_size
+# HTLD,13.41644,2023-10-26,2812.5
+# ACLS,124.09936,2023-10-30,843.75
+# BWA,36.58234,2023-10-30,703.125
+
+# model,trade_entry_price,trade_exit_price,trade_entry_date,trade_exit_date
+# TSHA,2.0878,2.5815300000000003,2023-10-23,2023-10-25
+# CMC,40.62148,42.08648,2023-10-24,2023-10-26
+# INGR,90.53907,93.82217,2023-10-24,2023-10-26
+
 
 os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
