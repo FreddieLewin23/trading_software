@@ -18,14 +18,14 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-os.environ['QI_API_KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
-API_KEY = "PKKQTM1Y95DE79L3FSLD"
-SECRET_KEY = "1au0qfRaewvYWbrTR0XEZvINHnv0MkKASXhmbzfD"
+API_KEY = ""
+SECRET_KEY = ""
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 clock = trading_client.get_clock()
 account = trading_client.get_account()
