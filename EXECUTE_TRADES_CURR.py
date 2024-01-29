@@ -21,7 +21,6 @@ import numpy as np
 # CMC,40.62148,42.08648,2023-10-24,2023-10-26
 # INGR,90.53907,93.82217,2023-10-24,2023-10-26
 
-
 os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
 configuration.api_key['X-API-KEY'] = ''
@@ -56,6 +55,16 @@ def current_max_leverage(date):
 
 
 def main_long_vol_adjusted():
+
+    curr_equity = account.equity
+    df_account_tracker = pd.read_csv(
+        "/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/account_value.csv")
+    new_row = pd.DataFrame({'run': [len(df_account_tracker) + 1], 'account_value': [curr_equity]})
+    df_account_tracker = pd.concat([df_account_tracker, new_row], ignore_index=True)
+    df_account_tracker.to_csv(
+        "/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/account_value.csv",
+        index=False)
+
     models_currently_open = []
     df_open = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
     for index, row in df_open.iterrows():
@@ -79,13 +88,14 @@ def main_long_vol_adjusted():
     illiquid = 0
     for index, row in current_trades_df.iterrows():
         illiquid += row['order_size']
-
+    illiquid = float(account.long_market_value)
     for model in models_to_buy:
         order_size = quantify_order_size_vol_adjusted_new(model=model, date_of_trade_entry=today_date)
         if order_size[0] >= float(account.equity) / 15:
             continue
-        print(f"Order Size: {order_size[1]}, Buying Power: {2 * float(account.equity) - illiquid}")
-        if illiquid >= current_max_leverage(today_date) * float(account.equity): 
+        curr_max_lev = current_max_leverage(today_date)
+        print(f"Order Size: {order_size[1]}, Buying Power: {curr_max_lev * float(account.equity) - illiquid}")
+        if illiquid >= curr_max_lev * float(account.equity):
             print('Maximum Leverage limit reached. No more trades may be placed.')
             print(f'Invested: {illiquid}, 2 * Equity: {2 * float(account.equity)}')
             continue
@@ -96,10 +106,19 @@ def main_long_vol_adjusted():
                               time_in_force=TimeInForce.DAY)
         try:
             account_request = trading_client.submit_order(market_order_data)
-            print(f'{model} BUY, order size: {order_size[0]}')
+            print(f'{model} BUY, order size: {order_size[1]}')
+            illiquid += order_size[1]
         except alpaca.common.exceptions.APIError:
-            print(f'there was a alpaca.common.exceptions.APIError for {model}')
+            print(f'there was a alpaca.common.exceptions.APIError for {model}. Removed from trades')
+
+            # this removes trades from the csv file if the model is not on the alpaca DB (since that trade cannot be executed)
+            csv_path = '/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv'
+            df_current_trades = pd.read_csv(csv_path)
+            df_current_trades = df_current_trades[df_current_trades['model'] != model]
+            df_current_trades.to_csv(csv_path, index=False)
             continue
+
 
 if __name__ == '__main__':
     main_long_vol_adjusted()
+
