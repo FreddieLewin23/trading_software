@@ -17,16 +17,15 @@ from alpaca.trading.requests import GetAssetsRequest, MarketOrderRequest, OrderS
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
-os.environ['QI_API_KEY'] = ''
+os.environ['QI_API_KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
 configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = ''
+configuration.api_key['X-API-KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
-API_KEY = ""
-SECRET_KEY = ""
+API_KEY = "PKKQTM1Y95DE79L3FSLD"
+SECRET_KEY = "1au0qfRaewvYWbrTR0XEZvINHnv0MkKASXhmbzfD"
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 clock = trading_client.get_clock()
 account = trading_client.get_account()
@@ -254,8 +253,18 @@ def price_trend_score(model, date_of_trade_entry):
 
 
 def find_base_order_size():
-    account_value = account.non_marginable_buying_power
+    account_value = float(account.non_marginable_buying_power)
     return int(account_value) / 254  # over the 11 year backtest the average number of active trades was 127.1. this can be improved upon
+
+
+def current_max_leverage_new(date):
+    current_volatility = qi_vol_indicator(date)
+    base_leverage = 1
+    average_volatility = 29.44
+    adjustment_factor = max(0.5, 1 - (current_volatility - average_volatility) / average_volatility)
+    adjusted_max_leverage = base_leverage * adjustment_factor
+    return min(2, adjusted_max_leverage)
+
 
 
 
@@ -299,10 +308,13 @@ def find_models_to_buy_long():
     df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
     for index, row in df.iterrows():
         currently_open_trades.append(row['model'])
+    today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
+    curr_max_leverage = current_max_leverage_new(date=today_date)
+    illiquid = float(account.long_market_value)
     for model in models_USD:
         print(f'{i} / {len(models_USD)} : {str(round(i / len(models_USD), 5) * 100)[:5]}%')
         i += 1
-        today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
+
         if model == "NLTX":
             continue
         current_model_data = Qi_wrapper.get_model_data(model=model, start=today_date, end=today_date, term='Long term')
@@ -318,21 +330,28 @@ def find_models_to_buy_long():
         absolute_gap = current_model_data['Absolute Gap'][0]
         real_value = model_value + absolute_gap
         if today_rsq > 65 and today_fvg < -1:
-            backtest_data = fvg_backtest_long(model=model, start='2019-03-03', end='2023-01-01',
+            backtest_data = fvg_backtest_long(model=model, start='2017-03-03', end='2023-12-29',
                                               threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
             if len(backtest_data) == 0:
+                print(f'No similar trades in last 5 years, too risky')
                 continue
             backtest_score_today = backtest_score_long(backtest_data)
             print(f'Backtest Score: {backtest_score_today}')
-            if backtest_score_today > 2:
-                price_trend_score_curr = price_trend_score(model=model, date_of_trade_entry=today_date)
-                print(f'Price Trend Score: {price_trend_score_curr}')
-                if price_trend_score_curr > 25:
-                    print(f'Individual Volatility: {vol_individual_new(model=model, date=today_date)}')
-                    new_trade_models.append([model, real_value, today_date, quantify_order_size_vol_adjusted_new(model=model, date_of_trade_entry=today_date)[1]])
-                    print(f'Market Volatility: {qi_vol_indicator(date=today_date)}')
-                    print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}')
+            if illiquid <= curr_max_leverage * float(account.equity):
+                # if the amount invested is greater than the max leverage * equity, do not enter trade
+                print(f'Invested: {illiquid}, Max Invested Current: {curr_max_leverage * float(account.equity)}')
+                if backtest_score_today > 5:
+                    price_trend_score_curr = price_trend_score(model=model, date_of_trade_entry=today_date)
+                    print(f'Price Trend Score: {price_trend_score_curr}')
+                    if price_trend_score_curr > 25:
+                        print(f'Individual Volatility: {vol_individual_new(model=model, date=today_date)}')
+                        order_size = quantify_order_size_vol_adjusted_new(model=model, date_of_trade_entry=today_date)[1]
+                        new_trade_models.append([model, real_value, today_date, order_size])
+                        print(f'Market Volatility: {qi_vol_indicator(date=today_date)}')
+                        print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}')
+                        illiquid += order_size
 
+    # SANM, CXT, SHYF, CPRT,
     csv_file = '/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv'
     file_exists = os.path.isfile(csv_file)
     file_is_empty = not file_exists or os.stat(csv_file).st_size == 0
@@ -446,6 +465,7 @@ def check_current_trades_long():
     print(f'{data_count} / {len(currently_open_trades)} had model data')
 
     return [models_to_exit, model_order_size_dict]
+
 
 
 
