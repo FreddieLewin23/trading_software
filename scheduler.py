@@ -18,9 +18,9 @@ import Qi_wrapper
 from backtest_json_redo_MVG import grab_data2, find_sd_from_model_data, subtract_days_from_date
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-os.environ['QI_API_KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+os.environ['QI_API_KEY'] = ''
 configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = 'aHUylOC5yM9xSRLpZs8Z45vHsxXClZNE4IW6rJ4n'
+configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 def job():
