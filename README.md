@@ -13,3 +13,6 @@
  backtests very well, then my software will put a larger buy on that trade. If it performs really badly on the backtest, my software will not enter that trade. 
  right now the software is either in the trade or not (or there are no rolling trade ends) so there is still potential for better returns.
 
+order sizes are vol adjusted (higher vol, lower order sizes), and max leverage of the account is also leverage adjusted (qi vol indicator increasing  leads to a lower max leverage). It dynamically delta hedges
+using Russell 3000 (tracking around 98% of investable equity in the US) by buying puts (max risk being the premimum paid). It only hedges positions whose RSq have dropped below 65 after entry (since the entry
+req for RSq is 65, but it may drop after that). It theory this means I am not exposed to idiosyncratic shifts of these US equities and only exposed to the model/spots currently responding well with macro.
