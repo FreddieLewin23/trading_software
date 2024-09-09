@@ -2,6 +2,8 @@ import os
 import json
 import pandas as pd
 import qi_client
+import random
+from tqdm import tqdm
 from datetime import datetime, timedelta
 import csv
 import numpy as np
@@ -24,8 +26,17 @@ configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
+# _________LONG TERM PAPER ACCOUNT________________________________________
 API_KEY = ""
 SECRET_KEY = ""
+# ________________________________________________________________________
+
+# MESS AROUND PAPER ACCOUNT________________________________________
+# API_KEY = ""
+# SECRET_KEY = ""
+# ________________________________________________________________________
+
+
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 clock = trading_client.get_clock()
 account = trading_client.get_account()
@@ -202,13 +213,6 @@ def backtest_score_long(results_from_backtest):
 
 
 def mvg_current_n_day_diff(model, date, look_back):
-    '''
-    no longer used
-    :param model:
-    :param date:
-    :param look_back:
-    :return:
-    '''
     date = str(date).split()[0]
     start_date = subtract_days_from_date(date, look_back)
     data_from_look_back = Qi_wrapper.get_model_data(model=model, start=start_date, end=start_date, term='Long term')
@@ -252,11 +256,6 @@ def price_trend_score(model, date_of_trade_entry):
     return (len([num for num in mvgs if num > 0]) / len(mvgs)) * 100
 
 
-def find_base_order_size():
-    account_value = float(account.non_marginable_buying_power)
-    return int(account_value) / 254  # over the 11 year backtest the average number of active trades was 127.1. this can be improved upon
-
-
 def current_max_leverage_new(date):
     current_volatility = qi_vol_indicator(date)
     base_leverage = 1
@@ -264,9 +263,6 @@ def current_max_leverage_new(date):
     adjustment_factor = max(0.5, 1 - (current_volatility - average_volatility) / average_volatility)
     adjusted_max_leverage = base_leverage * adjustment_factor
     return min(2, adjusted_max_leverage)
-
-
-
 
 
 def quantify_order_size_vol_adjusted_new(model, date_of_trade_entry):
@@ -291,17 +287,37 @@ def quantify_order_size_vol_adjusted_new(model, date_of_trade_entry):
     elif 25 <= pt_score < 50: pt_coefficient = 1
     elif 50 <= pt_score < 75: pt_coefficient = 1.25
     else: pt_coefficient = 1.5
-    base_order_size = float(account.equity) * 1.5 / 127
+    base_order_size = float(account.equity) / 175
     individual_vol = vol_individual_new(model=model, date=date_of_trade_entry)
     amount_to_buy = base_order_size * bt_coefficient * pt_coefficient * (1 - ((individual_vol - 3.26) / individual_vol))
     return [round(amount_to_buy / real_value, 4), amount_to_buy]
+
+
+def output_point_in_time_constituents(date):
+    df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/post_qi_meeting/R3K_monthly_historical_constituents.csv')
+    curr = df[date]
+    model_IDs = []
+    for i in range(1, len(curr)):
+        model_IDs.append(curr.iloc[i])
+    model_bloomberg_tickers = []
+    for model in model_IDs:
+        if type(model).__name__ == 'float':
+            continue
+        name = model.split()[0]
+        if name.isalpha():
+            model_bloomberg_tickers.append(name)
+    return model_bloomberg_tickers
 
 
 def find_models_to_buy_long():
     models_USD = [x.name
                   for x in api_instance.get_models(tags='USD, Stock')
                   if x.model_parameter == 'long term' and '_' not in x.name
-                  ][:3400]
+                  ]
+    today = str(datetime.today())[:10]
+    models_r3k = output_point_in_time_constituents('2024-01-01')
+    models_USD = [model for model in models_USD if model in models_r3k]
+    random.shuffle(models_USD)
     new_trade_models = []
     currently_open_trades = []
     i = 0
@@ -310,36 +326,49 @@ def find_models_to_buy_long():
         currently_open_trades.append(row['model'])
     today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
     curr_max_leverage = current_max_leverage_new(date=today_date)
+    max_investment = curr_max_leverage * float(account.equity)
     illiquid = float(account.long_market_value)
     for model in models_USD:
+
+        if 'US' in model:
+            split_lst = model.split()
+            model = split_lst[0]
+
+        if max_investment <= illiquid:
+            print(f'Max Invested: {max_investment}. Current Invested: {illiquid}. Over leveraged')
+            break
+
         print(f'{i} / {len(models_USD)} : {str(round(i / len(models_USD), 5) * 100)[:5]}%')
         i += 1
 
-        if model == "NLTX":
+        if model == "NLTX" or model == "CNP":
             continue
+
         current_model_data = Qi_wrapper.get_model_data(model=model, start=today_date, end=today_date, term='Long term')
         if model in currently_open_trades:
             continue
         if len(current_model_data) == 0:
+            print(f'Missing data for {i} / {len(currently_open_trades)}. Model: {model} ')
             continue
         today_fvg = current_model_data['FVG'][0]
         today_rsq = current_model_data['Rsq'][0]
         if float(today_rsq) >= 65 and float(today_fvg) <= -1:
-            print('__________________________')
+            print('________________FVG<-1__RSq>65________________')
         model_value = current_model_data['Model Value'][0]
         absolute_gap = current_model_data['Absolute Gap'][0]
         real_value = model_value + absolute_gap
         if today_rsq > 65 and today_fvg < -1:
-            backtest_data = fvg_backtest_long(model=model, start='2017-03-03', end='2023-12-29',
-                                              threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
-            if len(backtest_data) == 0:
-                print(f'No similar trades in last 5 years, too risky')
-                continue
-            backtest_score_today = backtest_score_long(backtest_data)
-            print(f'Backtest Score: {backtest_score_today}')
-            if illiquid <= curr_max_leverage * float(account.equity):
+            max_investment = curr_max_leverage * float(account.equity)
+            print(f'Invested: {illiquid}, Max Invested Current: {max_investment}')
+            if illiquid <= max_investment:
+                backtest_data = fvg_backtest_long(model=model, start='2017-03-03', end='2023-12-29',
+                                                  threshold_buy=-1, threshold_sell=-0.25, Rsq=65)
+                if len(backtest_data) == 0:
+                    print(f'No similar trades in last 5 years, too risky')
+                    continue
+                backtest_score_today = backtest_score_long(backtest_data)
                 # if the amount invested is greater than the max leverage * equity, do not enter trade
-                print(f'Invested: {illiquid}, Max Invested Current: {curr_max_leverage * float(account.equity)}')
+                print(f'Backtest Score: {backtest_score_today}')
                 if backtest_score_today > 5:
                     price_trend_score_curr = price_trend_score(model=model, date_of_trade_entry=today_date)
                     print(f'Price Trend Score: {price_trend_score_curr}')
@@ -351,7 +380,6 @@ def find_models_to_buy_long():
                         print(f'START TRADE WITH {model} FVG:{today_fvg}, Rsq:{today_rsq}')
                         illiquid += order_size
 
-    # SANM, CXT, SHYF, CPRT,
     csv_file = '/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv'
     file_exists = os.path.isfile(csv_file)
     file_is_empty = not file_exists or os.stat(csv_file).st_size == 0
@@ -380,16 +408,16 @@ def check_current_trades_long():
     #     now i have an array of model names of model with trades open on the demo account
     models_to_exit = []
     i = 0
+    today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
     for model in currently_open_trades:
         i += 1
-
-        today_date = str(pd.Timestamp.today(tz='America/New_York').date().isoformat()).split()[0]
         current_model_data = Qi_wrapper.get_model_data(model=model[0], start=today_date, end=today_date, term='Long term')
         if len(current_model_data) == 1:
             data_count += 1
         # print(f'{currently_open_trades.index(model[0])} / {len(currently_open_trades)}: {(currently_open_trades.index(model[0]) / len(currently_open_trades)) * 100} ')
 
         if len(current_model_data) == 0:
+            print(f'Missing data for Model: {model[0]} ')
             continue
         model_value = current_model_data['Model Value'][0]
         absolute_gap = current_model_data['Absolute Gap'][0]
@@ -443,7 +471,6 @@ def check_current_trades_long():
     #data for completed trades is an array of array with model name, buy, sell, buy date, sell date
 
     # this writes ot the completed trades to add the complete trades
-    print(data_for_completed_trades)
     existing_data = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/completed_trades_alpaca_local.csv')
     new_data = pd.DataFrame(data_for_completed_trades, columns=existing_data.columns)
     combined_data = pd.concat([existing_data, new_data], ignore_index=True)
@@ -452,20 +479,14 @@ def check_current_trades_long():
 
     current_trades_df = pd.read_csv("/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv")
     model_names_to_exit = [subarray[0][0] for subarray in models_to_exit]
-    print(current_trades_df)
     trade_data_to_keep = []
     for index, row in current_trades_df.iterrows():
         if row['model'] not in model_names_to_exit:
             trade_data_to_keep.append([row['model'], row['real_value'], row['today_date'], row['order_size']])
 
     df_new = pd.DataFrame(trade_data_to_keep, columns=['model', 'real_value', 'today_date', 'order_size'])
-    print(df_new)
     df_new.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv', index=False)
 
     print(f'{data_count} / {len(currently_open_trades)} had model data')
 
     return [models_to_exit, model_order_size_dict]
-
-
-
-
