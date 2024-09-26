@@ -84,14 +84,7 @@ def find_sd_from_model_data_backtest_bfo(model, date):
 
 def fvg_backtest_long_backtest_bfo(model, start, end, threshold_buy, threshold_sell, Rsq):
 
-    # TRY EXCEPT IS A NEW SEGMENT OF CODE
-    # for i in range(5):
-    #     try:
     df = filter_csv_by_date_bfo(model=model, start_date=start, end_date=end)
-    # df = Qi_wrapper.get_model_data(model=model, start=start, end=end, term='Long term')
-    #     except Exception as e:
-    #         time.sleep(2)
-    #         continue
 
     if len(df) == 0:
         return []
