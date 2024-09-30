@@ -21,14 +21,6 @@ configuration.api_key['X-API-KEY'] = ''
 api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
 
-# def filter_csv_by_date_bfo(model, start_date, end_date):
-#     path = '/Users/FreddieLewin/PycharmProjects/new_dl_token/bfo_backtest/model_data/'
-#     path = path + f'{model}.csv'
-#     df = pd.read_csv(path)
-#     df['Date'] = pd.to_datetime(df['Date'])
-#     filtered_df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
-#     return filtered_df
-
 def filter_csv_by_date_bfo(model, start_date, end_date):
     path = '/Users/FreddieLewin/PycharmProjects/new_dl_token/bfo_backtest/model_data/'
     path = path + f'{model}.csv'
