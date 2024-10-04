@@ -1,8 +1,9 @@
 import pandas as pd
-from algo_new.find_and_check_current_trades import (
+import math
+from refactored_algo.algo_main import (
     find_models_to_buy_long,
     check_current_trades_long,
-    quantify_order_size_vol_adjusted_new
+    quantify_order_size
 )
 import qi_client
 import time
@@ -12,7 +13,6 @@ import numpy as np
 from datetime import datetime, timedelta
 import sys
 
-# due to messed up local interpreter needing to use a different version of alpaca for dependency issues
 sys.path.append('/Users/FreddieLewin/miniconda3/envs/new_dl_token/lib/python3.11/site-packages/alpaca')
 import alpaca.common.exceptions
 from alpaca.trading.client import TradingClient
@@ -44,7 +44,7 @@ print(f"Market is {'open' if clock.is_open else 'closed'}")
 account = trading_client.get_account()
 positions = trading_client.get_all_positions()
 orders = trading_client.get_orders()
-df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
+df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/current_trades_refactor.csv')
 
 
 def calculate_total_delta():
@@ -77,7 +77,7 @@ def return_r3k_option_ticker():
 def save_hedging_transaction(transaction):
     df = pd.DataFrame([transaction])
     try:
-        df.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/hedging_transcations.csv',
+        df.to_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/hedging_transcations.csv',
                   mode='a', header=False, index=False)
     except Exception as e:
         print(f"Error saving transaction: {e}")
@@ -87,33 +87,45 @@ def execute_delta_hedge():
     total_delta = calculate_total_delta()
     hedge_ticker = return_r3k_option_ticker()
 
-    # change this to be the optimum hedging ratio, instead of just 100%,
-    # this also assumes that each contract controls 100 shares, this needs to be confirmed before it is run live
-    hedge_qty = abs(total_delta) // 100
+    curr_trades = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/current_trades_refactor.csv')
+    model_positions = [position.symbol for position in positions]
+    total_equity = 0
+    macro_equity = 0
+
+    today_str = str(datetime.today())[:10]
+    for position in positions:
+        model = position.symbol
+        model_data = Qi_wrapper.get_model_data(model=model, start=today_str, end=today_str, term='Long term')
+        today_rsq = model_data['Rsq'][0]
+        if today_rsq > 75:
+            macro_equity += position.market_value
+        total_equity += position.market_value
+
+    macro_equity_percentage = macro_equity / total_equity
+    hedge_qty = math.floor(abs(total_delta) // 100 * macro_equity_percentage)
+    # IE only hedge positions whose RSq have gone below 75 and are no longer in a macro regime
 
     if hedge_qty > 1000:
+        # ONLY BUY PUTS< NEVER SELL PUTS (UNLIMITED DOWNSIDE)
         if total_delta > 0:
             side = OrderSide.BUY
-        else:
-            side = OrderSide.SELL
+            market_order_data = MarketOrderRequest(
+                symbol=hedge_ticker,
+                qty=hedge_qty,
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                time_in_force=TimeInForce.DAY)
 
-        market_order_data = MarketOrderRequest(
-            symbol=hedge_ticker,
-            qty=hedge_qty,
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            time_in_force=TimeInForce.DAY)
-
-        account_request = trading_client.submit_order(market_order_data)
-        print(f"Executed {side} order for {hedge_qty} contracts of {hedge_ticker}.")
-        transaction = {
-            "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "ticker": hedge_ticker,
-            "side": side.value,
-            "quantity": hedge_qty,
-            "delta": total_delta
-        }
-        save_hedging_transaction(transaction)
+            account_request = trading_client.submit_order(market_order_data)
+            print(f"Executed {side} order for {hedge_qty} contracts of {hedge_ticker}.")
+            transaction = {
+                "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "ticker": hedge_ticker,
+                "side": side.value,
+                "quantity": hedge_qty,
+                "delta": total_delta
+            }
+            save_hedging_transaction(transaction)
     else:
         print("No significant delta to hedge.")
 
@@ -129,20 +141,8 @@ def qi_vol_indicator(date):
 def current_max_leverage(date):
     current_volatility = qi_vol_indicator(date)
     base_leverage = 1
-    average_volatility = 29.44  # this is the average qi_vol the last 5 years for the PITC of the R3K, so i am using it as a benchmark to compare current vol to
-    adjustment_factor = max(0.5, 1 - 0.65 * (current_volatility - average_volatility) / average_volatility) # this puts a lower bound of 0.5 of leverage
-    adjusted_max_leverage = base_leverage * adjustment_factor
-    return min(2, adjusted_max_leverage)  # this places an upper bound of 2 on leverage of the account
-
-
-def current_max_leverage_moving_average(date, volatility_window=5):
-    current_volatility = qi_vol_indicator(date)
-    base_leverage = 1
     average_volatility = 29.44
-    date = datetime.strptime(date, '%Y-%m-%d')
-    # Calculate smoothed volatility using a moving average
-    smoothed_volatility = np.mean([qi_vol_indicator(date - timedelta(days=i)) for i in range(volatility_window)])
-    adjustment_factor = max(0.5, 1 - (average_volatility - smoothed_volatility) / smoothed_volatility)
+    adjustment_factor = max(0.5, 1 - 0.65 * (current_volatility - average_volatility) / average_volatility)
     adjusted_max_leverage = base_leverage * adjustment_factor
     return min(2, adjusted_max_leverage)
 
@@ -151,19 +151,19 @@ def main_long_vol_adjusted():
     curr_equity = account.equity
     print(f'Account Value is at {curr_equity}')
     df_account_tracker = pd.read_csv(
-        "/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/account_value.csv")
+        "/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/account_value_timeseries_updated.csv")
 
     now_date = datetime.now()
     formatted_date = now_date.strftime("%Y-%m-%d %H:%M:%S")
 
-    new_row = pd.DataFrame({'datetime': [formatted_date], 'run': [len(df_account_tracker) + 1], 'account_value': [curr_equity]})
+    new_row = pd.DataFrame({'datetime': [formatted_date], 'index': [len(df_account_tracker) + 1], 'account_value': [curr_equity]})
     df_account_tracker = pd.concat([df_account_tracker, new_row], ignore_index=True)
     df_account_tracker.to_csv(
-        "/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/account_value.csv",
+        "/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/account_value_timeseries_updated.csv",
         index=False)
 
     models_currently_open = []
-    df_open = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
+    df_open = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/current_trades_refactor.csv')
     for index, row in df_open.iterrows():
         models_currently_open.append(row['model'])
     models_to_exit = [item[0] for item in check_current_trades_long()[0]]
@@ -181,13 +181,13 @@ def main_long_vol_adjusted():
                 print(f'{model} SELL')
     models_to_buy = [item[0] for item in find_models_to_buy_long()[0]]
     models_to_buy = [model for model in models_to_buy if model not in models_currently_open]
-    current_trades_df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv')
+    current_trades_df = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/current_trades_refactor.csv')
     illiquid = 0
     for index, row in current_trades_df.iterrows():
         illiquid += row['order_size']
     illiquid = float(account.long_market_value)
     for model in models_to_buy:
-        order_size = quantify_order_size_vol_adjusted_new(model=model, date_of_trade_entry=today_date)
+        order_size = quantify_order_size(model=model, date_of_trade_entry=today_date)
         if order_size[0] >= float(account.equity) / 15:
             continue
         curr_max_lev = current_max_leverage(today_date)
@@ -207,14 +207,18 @@ def main_long_vol_adjusted():
             illiquid += order_size[1]
         except alpaca.common.exceptions.APIError:
             print(f'there was a alpaca.common.exceptions.APIError for {model}. Removed from trades')
-
-            # this removes trades from the csv file if the model is not on the alpaca DB (since that trade cannot be executed)
-            csv_path = '/Users/FreddieLewin/PycharmProjects/new_dl_token/algo_new/current_trades_alpaca.csv'
+            csv_path = '/Users/FreddieLewin/PycharmProjects/new_dl_token/refactored_algo/current_trades_refactor.csv'
             df_current_trades = pd.read_csv(csv_path)
             df_current_trades = df_current_trades[df_current_trades['model'] != model]
             df_current_trades.to_csv(csv_path, index=False)
             continue
     time.sleep(5)
     # wait 5 seconds to ensure orders have gone through ensuring hedging calculations are done correctly
+
+
+if __name__ == '__main__':
+    main_long_vol_adjusted()
+
+
     # res = execute_delta_hed
 
