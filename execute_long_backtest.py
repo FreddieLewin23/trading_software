@@ -1,46 +1,34 @@
-from backtest_on_one_stock import check_current_trades_long_new_backtest_bfo, find_models_to_buy_long_new_backtest_bfo, filter_csv_by_date_bfo
-import os
-import qi_client
+import Qi_wrapper
+from backtesting_20251001.backtest_one_day import (check_current_trades,
+                                                   find_models_to_buy,
+                                                   filter_csv_by_date_bfo)
 import warnings
 from datetime import datetime, timedelta
 import pandas as pd
 
-warnings.simplefilter(action='ignore', category=FutureWarning)
-os.environ['QI_API_KEY'] = ''
-configuration = qi_client.Configuration()
-configuration.api_key['X-API-KEY'] = ''
-api_instance = qi_client.DefaultApi(qi_client.ApiClient(configuration))
 
-models_USD = [x.name
-              for x in api_instance.get_models(tags='USD, Stock')
-              if x.model_parameter == 'long term' and '_' not in x.name
-              ][:3400]
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 
 def find_account_value_and_update_account_value(date):
-    df = pd.read_csv("current_trade_bfo_backtest.csv")
-    dict_model_order_size_current_percent_return = []
-    for index, row in df.iterrows():
-        current_dict = {}
-        print(row['model'])
-        current_dict['order_size'] = row['order_size']
-        current_day_model_data = filter_csv_by_date_bfo(model=row['model'], start_date=date, end_date=date)
-        if len(current_day_model_data) == 0:
-            continue
-        current_real_value = current_day_model_data['Model Value'][0] + current_day_model_data['Absolute Gap'][0]
-        current_dict['percent_return'] = ((current_real_value - row['real_value']) / row['real_value']) * 100
-        dict_model_order_size_current_percent_return.append(current_dict)
-# at this point I have a dictionary of dictionaries where the keys are the model name and the values are a dictionary
-# containing the order_size and percent_return for the trade it is currently in with that model
-# to find the account value I need to store the cash in the account in the account_stats CSV file
-    df_account_stats = pd.read_csv("account_stats_bfo.csv")
-    for index, row in df_account_stats[len(df_account_stats) - 1:].iterrows():
-        latest_day_cash = row['account_value']
-    illiquid_value = 0
-    for dic in dict_model_order_size_current_percent_return:
-        illiquid_value += dic['order_size'] * ((100 + dic['percent_return']) / 100)
+    df_curr = pd.read_csv("/Users/FreddieLewin/PycharmProjects/new_dl_token/backtesting_20251001/data/current_trades.csv")
+    current_trade_illiquid = sum(df_curr['order_size'].tolist())
+    value_of_investment = 0
+    for index, row in df_curr.iterrows():
+        buy_price = row['real_value']
+        trade_data_curr = filter_csv_by_date_bfo(model=row['model'], start_date=date, end_date=date)
+        # this just says, when adding unrealised gains to the account, if there is no model data
+        if len(trade_data_curr) == 0:
+            trade_data_curr = Qi_wrapper.get_model_data(model=row['model'], start=date, end=date, term='Long term')
+        if len(trade_data_curr) == 0:
+            sell_price = buy_price
+        else:
+            sell_price = trade_data_curr['Model Value'][0] + trade_data_curr['Absolute Gap'][0]
+        value_of_investment += row['order_size'] * (1 + ((sell_price - buy_price) / buy_price))
+    change_in_current_investments = value_of_investment - current_trade_illiquid
 
-    value = 100000
-    df_completed_trades = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/bfo_backtest/completed_trades_backtest_long.csv')
+    value = 100_000
+    df_completed_trades = pd.read_csv('/Users/FreddieLewin/PycharmProjects/new_dl_token/backtesting_20251001/data/completed_trades.csv')
     for index, row in df_completed_trades.iterrows():
         buy = row['trade_entry_price']
         sell = row['trade_exit_price']
@@ -48,12 +36,13 @@ def find_account_value_and_update_account_value(date):
         percent_return = ((sell - buy) / buy) * 100
         value_added = order_size * (percent_return / 100)
         value += value_added
-    current_account_value = value
-    df_account_tracker = pd.read_csv("account_stats_bfo.csv")
+    current_account_value = value + change_in_current_investments
+    df_account_tracker = pd.read_csv("/Users/FreddieLewin/PycharmProjects/new_dl_token/backtesting_20251001/data/account_value.csv")
     new_row = pd.DataFrame({'date': [date], 'account_value': [current_account_value]})
     df_account_tracker = pd.concat([df_account_tracker, new_row], ignore_index=True)
-    df_account_tracker.to_csv("account_stats_bfo.csv", index=False)
+    df_account_tracker.to_csv("/Users/FreddieLewin/PycharmProjects/new_dl_token/backtesting_20251001/data/account_value.csv", index=False)
     return current_account_value
+
 
 def weekdays_between_dates(start_date_str, end_date_str):
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
@@ -68,9 +57,14 @@ def weekdays_between_dates(start_date_str, end_date_str):
         current_date += timedelta(days=1)
     return weekdays
 
+
+curr_pitc_model_data = None
+
+
 if __name__ == '__main__':
-    dates_for_backtest = weekdays_between_dates('2023-12-14', '2024-01-30')
+    dates_for_backtest = weekdays_between_dates('2013-01-01', '2024-01-01')
     for date in dates_for_backtest:
-        find_models_to_buy_long_new_backtest_bfo(date)
-        check_current_trades_long_new_backtest_bfo(date)
-        find_account_value_and_update_account_value(date
+        print(date)
+        find_models_to_buy(date)
+        check_current_trades(date)
+        find_account_value_and_update_account_value(date)
